@@ -5,7 +5,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key'
 socketio = SocketIO(app)
 
-# State: { room_id: { players, choices, scores, ready, mode, limit } }
+# State: { room_id: { players, names, choices, scores, mode, limit } }
 games = {}
 
 @app.route('/')
@@ -15,16 +15,16 @@ def index():
 @socketio.on('join_room')
 def handle_join(data):
     room = data['room']
+    player_name = data.get('name', 'Anonymous')
     sid = request.sid
     mode_data = data.get('settings', 'rounds_3').split('_')
     mode = mode_data[0]
     limit = int(mode_data[1])
 
     if room not in games:
-        # First player creates the room settings
         games[room] = {
-            'players': [], 'choices': {}, 'scores': {}, 
-            'ready': [], 'mode': mode, 'limit': limit
+            'players': [], 'names': {}, 'choices': {}, 'scores': {}, 
+            'mode': mode, 'limit': limit
         }
 
     if len(games[room]['players']) >= 2:
@@ -32,17 +32,19 @@ def handle_join(data):
         return
 
     games[room]['players'].append(sid)
+    games[room]['names'][sid] = player_name
     games[room]['scores'][sid] = 0
     join_room(room)
     
-    emit('status', {'message': f'Joined {room}. Waiting for opponent...'}, to=sid)
+    emit('status', {'message': f'Joined {room} as {player_name}. Waiting for opponent...'}, to=sid)
 
     if len(games[room]['players']) == 2:
-        # Send room settings to both players to sync UI
+        p1, p2 = games[room]['players'][0], games[room]['players'][1]
         emit('start_match', {
             'message': 'Match starting!',
             'mode': games[room]['mode'],
-            'limit': games[room]['limit']
+            'limit': games[room]['limit'],
+            'names': [games[room]['names'][p1], games[room]['names'][p2]]
         }, to=room)
 
 @socketio.on('make_choice')
@@ -60,20 +62,22 @@ def handle_choice(data):
 def evaluate_winner(room):
     players = games[room]['players']
     p1, p2 = players[0], players[1]
+    p1_name = games[room]['names'][p1]
+    p2_name = games[room]['names'][p2]
     choice1, choice2 = games[room]['choices'][p1], games[room]['choices'][p2]
     
     rules = {'rock': 'scissors', 'paper': 'rock', 'scissors': 'paper'}
     
-    winner_sid = None
+    winner_sid = 'tie' # NEW: Default to tie
     if choice1 == choice2:
         result_text = "It's a tie!"
     elif rules.get(choice1) == choice2:
-        result_text = "Player 1 wins!"
-        winner_sid = p1
+        result_text = f"{p1_name} wins!"
+        winner_sid = p1 # NEW
         games[room]['scores'][p1] += 1
     else:
-        result_text = "Player 2 wins!"
-        winner_sid = p2
+        result_text = f"{p2_name} wins!"
+        winner_sid = p2 # NEW
         games[room]['scores'][p2] += 1
 
     # Check for game over in 'rounds' mode
@@ -86,17 +90,17 @@ def evaluate_winner(room):
         'result': result_text, 
         'p1_choice': choice1, 
         'p2_choice': choice2,
-        'scores': list(games[room]['scores'].values()),
-        'game_over': game_over
+        'scores': [games[room]['scores'][p1], games[room]['scores'][p2]],
+        'names': [p1_name, p2_name],
+        'game_over': game_over,
+        'winner_sid': winner_sid # NEW: Send this to the frontend
     }, to=room)
 
-    # Clear choices for the next round
     games[room]['choices'] = {}
 
-    # NEW: Automatically start the next round after a 3-second delay
     if not game_over:
         socketio.sleep(3) 
         socketio.emit('start_round', to=room)
-
+        
 if __name__ == '__main__':
     socketio.run(app, debug=True)

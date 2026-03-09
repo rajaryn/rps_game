@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>1v1 Rock Paper Scissors</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -28,6 +29,7 @@
             align-items: center;
             min-height: 100vh;
             overflow: hidden;
+            transition: background-color 0.2s ease;
         }
 
         .container {
@@ -44,12 +46,10 @@
         h1 { margin-bottom: 0.5rem; font-weight: 800; letter-spacing: 1px; }
         .subtitle { color: var(--text-muted); margin-bottom: 2rem; font-size: 0.9rem; }
 
-        /* --- Screen Toggles --- */
         .screen { display: none; opacity: 0; transition: opacity 0.5s ease; }
         .screen.active { display: block; opacity: 1; }
         .hidden { display: none !important; }
 
-        /* --- Lobby UI --- */
         .input-group { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
         
         input, select {
@@ -80,7 +80,6 @@
         .btn:active:not(:disabled) { transform: translateY(0); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* --- Gameplay UI --- */
         #scoreboard {
             display: flex;
             justify-content: space-between;
@@ -139,18 +138,46 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            position: relative;
         }
         .weapon-btn:hover:not(:disabled) {
             transform: scale(1.1) rotate(5deg);
             background: #475569;
             border-color: var(--accent);
         }
-        .weapon-btn.selected {
-            background: var(--accent);
-            border-color: white;
-            transform: scale(1.1);
-        }
         .weapon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* --- VFX CSS Classes --- */
+        @keyframes selectPulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.8); }
+            70% { box-shadow: 0 0 0 25px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+        
+        .weapon-selected-vfx {
+            background: var(--accent) !important;
+            border-color: white !important;
+            opacity: 1 !important;
+            transform: scale(1.1);
+            animation: selectPulse 0.6s ease-out;
+        }
+
+        @keyframes shake {
+            0% { transform: translate(1px, 1px) rotate(0deg); }
+            10% { transform: translate(-1px, -2px) rotate(-1deg); }
+            20% { transform: translate(-3px, 0px) rotate(1deg); }
+            30% { transform: translate(3px, 2px) rotate(0deg); }
+            40% { transform: translate(1px, -1px) rotate(1deg); }
+            50% { transform: translate(-1px, 2px) rotate(-1deg); }
+            60% { transform: translate(-3px, 1px) rotate(0deg); }
+            70% { transform: translate(3px, 1px) rotate(-1deg); }
+            80% { transform: translate(-1px, -1px) rotate(1deg); }
+            90% { transform: translate(1px, 2px) rotate(0deg); }
+            100% { transform: translate(1px, -2px) rotate(-1deg); }
+        }
+        
+        .shake-vfx { animation: shake 0.5s; }
+        .flash-red-vfx { background-color: #450a0a !important; }
 
         #result-box {
             margin-top: 2rem;
@@ -165,13 +192,14 @@
 </head>
 <body>
 
-    <div class="container">
+    <div class="container" id="main-container">
         
         <div id="lobby-screen" class="screen active">
             <h1>RPS Showdown</h1>
             <p class="subtitle">Create or join a room to play 1v1</p>
             
             <div class="input-group">
+                <input type="text" id="name-input" placeholder="Enter Your Name" autocomplete="off" maxlength="15">
                 <input type="text" id="room-input" placeholder="Enter Room Code (e.g., room42)" autocomplete="off">
                 
                 <select id="game-mode">
@@ -189,9 +217,9 @@
         <div id="game-screen" class="screen">
             
             <div id="scoreboard">
-                <div>P1: <span id="score-p1" class="score">0</span></div>
+                <div><span id="name-p1">P1</span>: <span id="score-p1" class="score">0</span></div>
                 <div id="main-timer" class="hidden">60s</div>
-                <div>P2: <span id="score-p2" class="score">0</span></div>
+                <div><span id="name-p2">P2</span>: <span id="score-p2" class="score">0</span></div>
             </div>
 
             <div id="status-bar">Waiting for opponent...</div>
@@ -224,7 +252,20 @@
 
         const emojiMap = { 'rock': '🪨', 'paper': '📄', 'scissors': '✂️' };
 
-        // --- Socket Listeners ---
+        // --- NEW: Audio SFX Setup ---
+        const sfx = {
+            select: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=button-124476.mp3'),
+            win: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_bb630cc098.mp3?filename=success-1-6297.mp3'),
+            lose: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_c6ccf3232f.mp3?filename=negative_beeps-6008.mp3'),
+            tie: new Audio('https://cdn.pixabay.com/download/audio/2022/03/15/audio_793b821422.mp3?filename=pop-94319.mp3')
+        };
+
+        // Helper function to play sound safely
+        function playSound(type) {
+            sfx[type].currentTime = 0; // Reset sound to start if played rapidly
+            sfx[type].play().catch(e => console.log("Audio play prevented by browser:", e));
+        }
+
         socket.on('status', function(data) {
             if (document.getElementById('lobby-screen').classList.contains('active')) {
                 document.getElementById('lobby-msg').innerText = data.message;
@@ -242,6 +283,9 @@
             document.getElementById('lobby-screen').classList.remove('active');
             document.getElementById('game-screen').classList.add('active');
             
+            document.getElementById('name-p1').innerText = data.names[0];
+            document.getElementById('name-p2').innerText = data.names[1];
+
             gameMode = data.mode;
             if (gameMode === 'time') {
                 startMainTimer(data.limit);
@@ -258,34 +302,54 @@
             clearInterval(roundTimerInterval);
             document.getElementById('timer').innerText = '0';
             
-            // Update Scores
             document.getElementById('score-p1').innerText = data.scores[0];
             document.getElementById('score-p2').innerText = data.scores[1] || 0;
 
-            // Show Results
             document.getElementById('result-winner').innerText = data.result;
             document.getElementById('result-matchup').innerText = 
-                `P1: ${emojiMap[data.p1_choice]} vs P2: ${emojiMap[data.p2_choice]}`;
+                `${data.names[0]}: ${emojiMap[data.p1_choice]}  vs  ${data.names[1]}: ${emojiMap[data.p2_choice]}`;
             
             document.getElementById('result-box').style.display = 'block';
             document.querySelectorAll('.weapon-btn').forEach(b => b.disabled = true);
 
-            // Handle Game Over or Auto-Next Round
+            // --- Trigger SFX & VFX ---
+            if (data.winner_sid === socket.id) {
+                playSound('win');
+                confetti({
+                    particleCount: 150,
+                    spread: 80,
+                    origin: { y: 0.6 },
+                    colors: ['#3b82f6', '#10b981', '#ffffff']
+                });
+            } else if (data.winner_sid !== 'tie') {
+                playSound('lose');
+                document.body.classList.add('flash-red-vfx');
+                document.getElementById('main-container').classList.add('shake-vfx');
+                
+                setTimeout(() => {
+                    document.body.classList.remove('flash-red-vfx');
+                    document.getElementById('main-container').classList.remove('shake-vfx');
+                }, 500);
+            } else {
+                playSound('tie');
+            }
+
             if (data.game_over) {
                 endGame();
             } else {
                 document.getElementById('status-bar').innerText = "Next round starting in 3 seconds...";
-                document.getElementById('next-btn').style.display = 'none'; // Ensure button stays hidden
+                document.getElementById('next-btn').style.display = 'none';
             }
         });
 
-        // --- Game Actions ---
         function joinRoom() {
+            const name = document.getElementById('name-input').value.trim() || 'Player';
             const room = document.getElementById('room-input').value.trim();
             const settings = document.getElementById('game-mode').value;
+            
             if (room) {
                 currentRoom = room;
-                socket.emit('join_room', { room: room, settings: settings });
+                socket.emit('join_room', { room: room, name: name, settings: settings });
                 document.getElementById('lobby-msg').innerText = "Connecting...";
             }
         }
@@ -294,10 +358,12 @@
             if (isGameOver) return;
             choiceMade = false;
             document.getElementById('result-box').style.display = 'none';
+            
             document.querySelectorAll('.weapon-btn').forEach(b => {
                 b.disabled = false;
-                b.classList.remove('selected');
+                b.classList.remove('weapon-selected-vfx');
             });
+            
             document.getElementById('status-bar').innerText = "Pick your weapon!";
             startRoundTimer(10);
         }
@@ -307,14 +373,14 @@
             
             choiceMade = true;
             document.querySelectorAll('.weapon-btn').forEach(b => b.disabled = true);
-            document.getElementById(`btn-${choice}`).classList.add('selected');
-            document.getElementById(`btn-${choice}`).disabled = false; // Keep selected visible
+            
+            playSound('select'); // Play lock-in sound
+            document.getElementById(`btn-${choice}`).classList.add('weapon-selected-vfx');
             
             socket.emit('make_choice', { room: currentRoom, choice: choice });
             document.getElementById('status-bar').innerText = `Locked in ${emojiMap[choice]}...`;
         }
 
-        // --- Timers ---
         function startRoundTimer(seconds) {
             let timeLeft = seconds;
             const timerEl = document.getElementById('timer');
@@ -361,9 +427,9 @@
             
             const nextBtn = document.getElementById('next-btn');
             nextBtn.innerText = "Return to Lobby";
-            nextBtn.style.display = 'inline-block'; // Reveal the button
+            nextBtn.style.display = 'inline-block';
             nextBtn.disabled = false;
-            nextBtn.setAttribute('onclick', 'location.reload()'); // Refreshes page to start over
+            nextBtn.setAttribute('onclick', 'location.reload()');
             document.getElementById('result-box').style.display = 'block';
         }
     </script>
