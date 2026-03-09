@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1v1 Rock Paper Scissors</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #0f172a;
+            --card-bg: #1e293b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --danger: #ef4444;
+            --success: #10b981;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins', sans-serif; }
+
+        body {
+            background-color: var(--primary-bg);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            background-color: var(--card-bg);
+            padding: 3rem;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            text-align: center;
+            width: 100%;
+            max-width: 600px;
+            transition: all 0.3s ease;
+        }
+
+        h1 { margin-bottom: 0.5rem; font-weight: 800; letter-spacing: 1px; }
+        .subtitle { color: var(--text-muted); margin-bottom: 2rem; font-size: 0.9rem; }
+
+        /* --- Screen Toggles --- */
+        .screen { display: none; opacity: 0; transition: opacity 0.5s ease; }
+        .screen.active { display: block; opacity: 1; }
+
+        /* --- Lobby UI --- */
+        .input-group { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+        
+        input {
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #334155;
+            background: #0f172a;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+            text-align: center;
+            transition: border-color 0.3s;
+        }
+        input:focus { border-color: var(--accent); }
+
+        .btn {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .btn:hover { background-color: var(--accent-hover); transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+
+        /* --- Gameplay UI --- */
+        #status-bar {
+            background: #334155;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            font-weight: 600;
+        }
+
+        .timer-circle {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: var(--primary-bg);
+            border: 4px solid var(--accent);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 2rem auto;
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--text-main);
+        }
+        .timer-warning { border-color: var(--danger); color: var(--danger); }
+
+        .weapons {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .weapon-btn {
+            background: #334155;
+            border: 2px solid transparent;
+            border-radius: 15px;
+            padding: 20px;
+            font-size: 3rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100px;
+            height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .weapon-btn:hover:not(:disabled) {
+            transform: scale(1.1) rotate(5deg);
+            background: #475569;
+            border-color: var(--accent);
+        }
+        .weapon-btn.selected {
+            background: var(--accent);
+            border-color: white;
+            transform: scale(1.1);
+        }
+        .weapon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #result-box {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            border-radius: 10px;
+            background: var(--primary-bg);
+            display: none;
+        }
+        .result-text { font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem; }
+        .matchup { color: var(--text-muted); font-size: 1rem; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        
+        <div id="lobby-screen" class="screen active">
+            <h1>RPS Showdown</h1>
+            <p class="subtitle">Create or join a room to play 1v1</p>
+            
+            <div class="input-group">
+                <input type="text" id="room-input" placeholder="Enter Room Code (e.g., room42)" autocomplete="off">
+                <button class="btn" onclick="joinRoom()">Enter Arena</button>
+            </div>
+            <p id="lobby-msg" style="color: var(--text-muted); font-size: 0.9rem;"></p>
+        </div>
+
+        <div id="game-screen" class="screen">
+            <div id="status-bar">Waiting for opponent...</div>
+            
+            <div id="timer" class="timer-circle">10</div>
+
+            <div class="weapons">
+                <button class="weapon-btn" id="btn-rock" onclick="makeChoice('rock')">🪨</button>
+                <button class="weapon-btn" id="btn-paper" onclick="makeChoice('paper')">📄</button>
+                <button class="weapon-btn" id="btn-scissors" onclick="makeChoice('scissors')">✂️</button>
+            </div>
+
+            <div id="result-box">
+                <div class="result-text" id="result-winner">You Win!</div>
+                <div class="matchup" id="result-matchup">🪨 vs ✂️</div>
+                <button class="btn" style="margin-top: 15px; padding: 10px 20px;" onclick="resetRound()">Next Round</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const socket = io();
+        let currentRoom = '';
+        let timerInterval;
+        let choiceMade = false;
+
+        // UI Elements
+        const lobbyScreen = document.getElementById('lobby-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const statusBar = document.getElementById('status-bar');
+        const lobbyMsg = document.getElementById('lobby-msg');
+        const timerEl = document.getElementById('timer');
+        const weaponBtns = document.querySelectorAll('.weapon-btn');
+        const resultBox = document.getElementById('result-box');
+
+        const emojiMap = { 'rock': '🪨', 'paper': '📄', 'scissors': '✂️' };
+
+        // --- Socket Listeners ---
+        socket.on('status', function(data) {
+            if (lobbyScreen.classList.contains('active')) {
+                lobbyMsg.innerText = data.message;
+            } else {
+                statusBar.innerText = data.message;
+            }
+        });
+
+        socket.on('start_game', function(data) {
+            switchScreen(gameScreen);
+            resetRoundUI();
+            statusBar.innerText = "Game ON! Pick your weapon.";
+            startTimer(10);
+        });
+
+        socket.on('game_result', function(data) {
+            clearInterval(timerInterval);
+            timerEl.innerText = '0';
+            
+            // Show results
+            document.getElementById('result-winner').innerText = data.result;
+            document.getElementById('result-matchup').innerText = 
+                `P1: ${emojiMap[data.p1_choice]}  vs  P2: ${emojiMap[data.p2_choice]}`;
+            
+            resultBox.style.display = 'block';
+            statusBar.innerText = "Round Over";
+            disableWeapons(true);
+        });
+
+        socket.on('error', function(data) {
+            alert(data.message);
+            lobbyMsg.innerText = '';
+        });
+
+        // --- Game Actions ---
+        function joinRoom() {
+            const room = document.getElementById('room-input').value.trim();
+            if (room) {
+                currentRoom = room;
+                socket.emit('join_room', { room: room });
+                lobbyMsg.innerText = "Connecting...";
+            }
+        }
+
+        function makeChoice(choice) {
+            if (choiceMade) return;
+            
+            choiceMade = true;
+            disableWeapons(true);
+            document.getElementById(`btn-${choice}`).classList.add('selected');
+            document.getElementById(`btn-${choice}`).disabled = false; // Keep selected visible
+            
+            socket.emit('make_choice', { room: currentRoom, choice: choice });
+            statusBar.innerText = `You locked in ${emojiMap[choice]}. Waiting for opponent...`;
+        }
+
+        function startTimer(seconds) {
+            let timeLeft = seconds;
+            timerEl.innerText = timeLeft;
+            timerEl.classList.remove('timer-warning');
+            
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                timerEl.innerText = timeLeft;
+                
+                if (timeLeft <= 3) timerEl.classList.add('timer-warning');
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    if (!choiceMade) {
+                        const options = ['rock', 'paper', 'scissors'];
+                        makeChoice(options[Math.floor(Math.random() * options.length)]);
+                    }
+                }
+            }, 1000);
+        }
+
+        // --- UI Helpers ---
+        function switchScreen(screenToShow) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            screenToShow.classList.add('active');
+        }
+
+        function disableWeapons(disabled) {
+            weaponBtns.forEach(btn => btn.disabled = disabled);
+        }
+
+        function resetRound() {
+            socket.emit('join_room', { room: currentRoom }); // Trick to trigger a backend check if we want, or just wait for both. 
+            // For now, just reset local UI and wait for next start_game event
+            resultBox.style.display = 'none';
+            statusBar.innerText = "Waiting for opponent to ready up...";
+            // If you want auto-next round, you'll need a small backend update to track "ready" states.
+        }
+
+        function resetRoundUI() {
+            choiceMade = false;
+            resultBox.style.display = 'none';
+            disableWeapons(false);
+            weaponBtns.forEach(btn => btn.classList.remove('selected'));
+        }
+    </script>
+</body>
+</html>
